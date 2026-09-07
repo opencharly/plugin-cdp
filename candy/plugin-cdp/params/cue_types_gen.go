@@ -32,6 +32,14 @@ type CdpInput struct {
 	// the scalar-sugar primary: `cdp: <method>`).
 	Method string `yaml:"method,omitempty" json:"method"`
 
+	// action — start|stop|status for a session (session). session start begins
+	// capturing the CDP screencast (Page.startScreencast) at fps into an MJPEG stream
+	// (the host-side detached recorder); session stop finalizes it to the evidence row.
+	Action string `yaml:"action,omitempty" json:"action,omitempty"`
+
+	// fps — the screencast frame rate for session (default 5).
+	Fps int `yaml:"fps,omitempty" json:"fps,omitempty"`
+
 	// tab — the target tab: a 1-based page index or a DevTools UUID.
 	Tab string `yaml:"tab,omitempty" json:"tab,omitempty"`
 
@@ -82,4 +90,26 @@ type CdpInput struct {
 	ArtifactMinDimensions string `yaml:"artifact_min_dimensions,omitempty" json:"artifact_min_dimensions,omitempty"`
 
 	ArtifactNotUniform bool `yaml:"artifact_not_uniform,omitempty" json:"artifact_not_uniform,omitempty"`
+
+	// session — the DETACHED host-side recorder (Cutover E, E-3): `cdp: session` starts
+	// the plugin's OWN binary in recorder mode through the runner's generic
+	// background-session service (plugin-check's verb:session seam). The recorder
+	// re-dials the tab's CDP WebSocket (the plugin's existing browser venue),
+	// captures Page.startScreencast frames at fps into state_dir/frames.mjpeg (each
+	// event's JPEG base64 lands as-is — no re-encode), and on SIGTERM finalizes with
+	// the FINAL marker + the evidence row.json. tab selects the captured tab
+	// (default "1" — the first page tab). venue/phase are stamped into the row.
+	SessionId string `yaml:"session_id,omitempty" json:"session_id,omitempty"`
+
+	StateDir string `yaml:"state_dir,omitempty" json:"state_dir,omitempty"`
+
+	// artifact_dir — the runner-injected generic evidence-artifact dir (verb-agnostic;
+	// the provider appends its own filename/extension).
+	ArtifactDir string `yaml:"artifact_dir,omitempty" json:"artifact_dir,omitempty"`
+
+	LogDir string `yaml:"log_dir,omitempty" json:"log_dir,omitempty"`
+
+	Venue string `yaml:"venue,omitempty" json:"venue,omitempty"`
+
+	Phase string `yaml:"phase,omitempty" json:"phase,omitempty"`
 }

@@ -18,7 +18,9 @@ import (
 )
 
 // methods.go is the cdp method dispatcher + the CDP-protocol client layer, moved from
-// charly/cdp.go. Every method was refactored from a CLI Run() that PRINTED to stdout/
+// charly/cdp.go (plus the session method, plan Cutover E, E-3 — dispatched from
+// provider.go before dialing, over the runner's generic background-session service).
+// Every method was refactored from a CLI Run() that PRINTED to stdout/
 // stderr into a function that RETURNS the captured stdout string — so provider.go can
 // feed the output through the shared sdk matcher pipeline + sdk.RunArtifactValidators
 // (a host-side matcher step does not run for an out-of-process verb). The

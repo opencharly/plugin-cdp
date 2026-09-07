@@ -23,7 +23,9 @@ plugin-cdp:
             machinery) — so this plugin needs no container inspection at all. Provides the
             full query/action surface (status/list/url/text/html/eval/axtree/coords/raw/wait/
             screenshot/open/close/click/type) plus the SPA remote-desktop input group
-            (spa-status/click/mouse/type/key/key-combo). The R10 consumer is a Chrome-bearing
+            (spa-status/click/mouse/type/key/key-combo) and session (session = the host-side detached
+            CDP screencast recorder over the runner's generic background-session service, Cutover E E-3).
+            The R10 consumer is a Chrome-bearing
             pod bed whose check composes this plugin (e.g. sway-browser-vnc).
         plugin:
             source: github.com/opencharly/plugin-cdp/candy/plugin-cdp
@@ -37,5 +39,37 @@ plugin-cdp:
                 - contains: ok
               eventually: 60s
               retry_interval: 5s
+              context:
+                - runtime
+            - check: the cdp session method starts a HOST-side detached CDP screencast recorder against the live deployment's DevTools endpoint (Page.startScreencast frames into MJPEG through the runner's generic background-session service)
+              id: cdp-session-start
+              cdp:
+                method: session
+                action: start
+                session_id: ade-cdp-session
+                tab: "1"
+                fps: 2
+              stdout:
+                - contains: started
+              context:
+                - runtime
+            - check: the cdp session status reports the detached recorder alive
+              id: cdp-session-status
+              cdp:
+                method: session
+                action: status
+                session_id: ade-cdp-session
+              stdout:
+                - contains: alive=true
+              context:
+                - runtime
+            - check: the cdp session stop finalizes the detached recorder and its evidence row (frames.mjpeg + row.json)
+              id: cdp-session-stop
+              cdp:
+                method: session
+                action: stop
+                session_id: ade-cdp-session
+              stdout:
+                - contains: stopped
               context:
                 - runtime
