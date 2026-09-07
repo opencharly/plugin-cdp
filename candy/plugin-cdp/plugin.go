@@ -1,7 +1,9 @@
 // Package cdp is the charly plugin serving the `cdp` Chrome-DevTools-Protocol
 // check verb (an importable root package + its own go.mod). It probes a live
 // deployment's Chrome over CDP — open/list/close/text/html/url/eval/axtree/coords/
-// raw/wait/screenshot/click/type plus the SPA remote-desktop input group —
+// raw/wait/screenshot/click/type plus the SPA remote-desktop input group and the
+// session capture method (the host-side detached CDP screencast recorder, Cutover E
+// E-3) —
 // speaking the DevTools HTTP (/json) + per-tab CDP WebSocket surface via
 // golang.org/x/net/websocket. Since the schema-compaction cutover an authored
 // `cdp:` step desugars to the internal plugin/plugin_input envelope, and every

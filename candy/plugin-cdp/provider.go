@@ -32,10 +32,12 @@ type cdpEndpoint struct {
 
 // cdpEnv is the plugin-side decode of the CheckEnv the host ships as Operation.Env for a
 // `cdp:` check step (provider_checkenv.go). Box/Mode mirror the shared CheckEnv; the endpoint
-// is no longer pre-shipped here — the plugin resolves it itself via cc.ResolveEndpoint.
+// is no longer pre-shipped here — the plugin resolves it itself via cc.ResolveEndpoint;
+// Venue is the shared snapshot's venue id (session evidence-row provenance).
 type cdpEnv struct {
-	Box  string `json:"box"`
-	Mode string `json:"mode"` // "live" | "box"
+	Box   string `json:"box"`
+	Mode  string `json:"mode"` // "live" | "box"
+	Venue string `json:"venue"`
 }
 
 type provider struct{ pb.UnimplementedProviderServer }
@@ -82,6 +84,17 @@ func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeRe
 		return sdk.ResultJSON("skip", fmt.Sprintf("cdp: %s has no resolved DevTools endpoint (box=%q)", method, env.Box))
 	}
 	ep := &cdpEndpoint{URL: "http://" + addr}
+
+	// session (Cutover E, E-3): the DETACHED recorder holds the CDP wire — the provider
+	// never dials. The endpoint resolution above gates on the live deployment (mirroring
+	// the record-session contract); start hands the spawn to the runner's generic
+	// background-session service (verb:session) over the InvokeProvider reverse leg;
+	// stop/status talk to that same service. No artifact is produced inside this Invoke
+	// (the recorder writes frames.mjpeg detached), so artifactMethod stays false.
+	if method == "session" {
+		out, runErr := runSession(ctx, cc, ep, &in, env.Venue)
+		return sdk.VerbVerdict("cdp", method, out, runErr, &op, false)
+	}
 
 	out, runErr := dispatch(ctx, ep, &op, &in)
 

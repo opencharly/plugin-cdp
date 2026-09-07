@@ -26,7 +26,13 @@
 #CdpInput: {
 	// method — the cdp method to dispatch (the former core #CdpMethod enum; also
 	// the scalar-sugar primary: `cdp: <method>`).
-	method: "status" | "list" | "url" | "text" | "html" | "eval" | "axtree" | "coords" | "raw" | "wait" | "screenshot" | "open" | "close" | "click" | "type" | "spa-status" | "spa-click" | "spa-type" | "spa-key" | "spa-key-combo" | "spa-mouse"
+	method: "status" | "list" | "url" | "text" | "html" | "eval" | "axtree" | "coords" | "raw" | "wait" | "screenshot" | "open" | "close" | "click" | "type" | "spa-status" | "spa-click" | "spa-type" | "spa-key" | "spa-key-combo" | "spa-mouse" | "session"
+	// action — start|stop|status for a session (session). session start begins
+	// capturing the CDP screencast (Page.startScreencast) at fps into an MJPEG stream
+	// (the host-side detached recorder); session stop finalizes it to the evidence row.
+	action?: "start" | "stop" | "status" @go(Action)
+	// fps — the screencast frame rate for session (default 5).
+	fps?: int & >=1 @go(Fps,type=int)
 	// tab — the target tab: a 1-based page index or a DevTools UUID.
 	tab?: string
 	// expression — the JavaScript expression `eval` evaluates.
@@ -61,4 +67,21 @@
 	artifact_min_bytes?:      int & >=0                    @go(ArtifactMinBytes,type=int)
 	artifact_min_dimensions?: string & =~"^[0-9]+x[0-9]+$" @go(ArtifactMinDimensions)
 	artifact_not_uniform?:    bool                         @go(ArtifactNotUniform)
+	// session — the DETACHED host-side recorder (Cutover E, E-3): `cdp: session` starts
+	// the plugin's OWN binary in recorder mode through the runner's generic
+	// background-session service (plugin-check's verb:session seam). The recorder
+	// re-dials the tab's CDP WebSocket (the plugin's existing browser venue),
+	// captures Page.startScreencast frames at fps into state_dir/frames.mjpeg (each
+	// event's JPEG base64 lands as-is — no re-encode), and on SIGTERM finalizes with
+	// the FINAL marker + the evidence row.json. tab selects the captured tab
+	// (default "1" — the first page tab). venue/phase are stamped into the row.
+	session_id?: string @go(SessionId)
+	state_dir?:  string @go(StateDir)
+	// artifact_dir — the runner-injected generic evidence-artifact dir (verb-agnostic;
+	// the provider appends its own filename/extension).
+	artifact_dir?: string @go(ArtifactDir)
+	log_dir?:  string @go(LogDir)
+	venue?:      string @go(Venue)
+	phase?:      string @go(Phase)
 }
+

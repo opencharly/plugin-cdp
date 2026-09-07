@@ -55,6 +55,12 @@ type CDPClient struct {
 	mu      sync.Mutex
 	pending map[int]chan cdpMessage
 	done    chan struct{}
+	// events — the delivery channel for server-pushed messages (ID==0, Method
+	// set), e.g. Page.screencastFrame. readLoop pushes events here (non-blocking)
+	// and CLOSES the channel when the wire dies — a consumer reads until ok==false.
+	// Call() responses never ride it (they go to pending); a client that never
+	// reads events is unaffected (full-channel pushes drop).
+	events chan cdpMessage
 }
 
 // NewCDPClient connects to a CDP WebSocket endpoint and starts reading messages. ctx is the STEP's
@@ -73,6 +79,7 @@ func NewCDPClient(ctx context.Context, wsURL string) (*CDPClient, error) {
 		ctx:     ctx,
 		pending: make(map[int]chan cdpMessage),
 		done:    make(chan struct{}),
+		events:  make(chan cdpMessage, 64),
 	}
 	go c.readLoop()
 	return c, nil
@@ -97,7 +104,10 @@ func (c *CDPClient) callTimeout() time.Duration {
 	return cdpCallTimeoutFloor
 }
 
-// readLoop reads messages from the WebSocket and dispatches responses to pending callers.
+// readLoop reads messages from the WebSocket and dispatches responses to pending
+// callers (ID != 0) plus server-pushed events (Method set, ID == 0 — e.g.
+// Page.screencastFrame) to the events channel. On a wire error it closes every
+// pending response channel and the events channel, then returns.
 func (c *CDPClient) readLoop() {
 	defer close(c.done)
 	for {
@@ -110,6 +120,7 @@ func (c *CDPClient) readLoop() {
 				delete(c.pending, id)
 			}
 			c.mu.Unlock()
+			close(c.events)
 			return
 		}
 		if msg.ID != 0 && msg.Method == "" {
@@ -121,6 +132,13 @@ func (c *CDPClient) readLoop() {
 			c.mu.Unlock()
 			if ok {
 				ch <- msg
+			}
+			continue
+		}
+		if msg.Method != "" {
+			select {
+			case c.events <- msg:
+			default: // slow consumer — drop, never stall the read loop
 			}
 		}
 	}
@@ -176,6 +194,28 @@ func (c *CDPClient) Call(method string, params any) (json.RawMessage, error) {
 		abandon()
 		return nil, fmt.Errorf("CDP call %s timed out after %s", method, timeout.Round(time.Millisecond))
 	}
+}
+
+// Events returns the channel server-pushed events are delivered on (see the
+// fields comment). readLoop closes it when the wire dies; a consumer reads until
+// ok==false.
+func (c *CDPClient) Events() <-chan cdpMessage { return c.events }
+
+// Send writes a CDP method call WITHOUT registering a pending waiter — the
+// eventual response is dropped by readLoop. Fire-and-forget for high-frequency
+// pacing acks (Page.screencastFrameAck) where a wedged browser must never stall
+// the caller on a 30s call timeout.
+func (c *CDPClient) Send(method string, params any) error {
+	var rawParams json.RawMessage
+	if params != nil {
+		b, err := json.Marshal(params)
+		if err != nil {
+			return fmt.Errorf("marshaling params: %w", err)
+		}
+		rawParams = b
+	}
+	msg := cdpMessage{ID: int(c.nextID.Add(1)), Method: method, Params: rawParams}
+	return websocket.JSON.Send(c.ws, msg)
 }
 
 // Close shuts down the WebSocket connection.
