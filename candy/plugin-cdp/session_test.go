@@ -192,11 +192,12 @@ func TestBuildSessionSpawn(t *testing.T) {
 }
 
 // TestDefaultTabSessionSpawn covers the default-tab threading: an authored session
-// without tab spawns the recorder with no CHARLY_CDP_TAB (the recorder's "1" default).
+// without tab spawns the recorder with NO CHARLY_CDP_TAB key (the recorder's "1"
+// default), mirroring the conditional venue/phase env.
 func TestDefaultTabSessionSpawn(t *testing.T) {
 	req := buildSessionSpawn(&params.CdpInput{SessionId: "s", StateDir: "/x"}, &cdpEndpoint{URL: "http://h:9222"}, "/e", "", "")
-	if _, ok := req.Env[EnvTab]; ok && req.Env[EnvTab] != "" {
-		t.Errorf("CHARLY_CDP_TAB = %q, want unset (recorder defaults to tab 1)", req.Env[EnvTab])
+	if _, ok := req.Env[EnvTab]; ok {
+		t.Errorf("CHARLY_CDP_TAB present (%q), want unset (recorder defaults to tab 1)", req.Env[EnvTab])
 	}
 }
 

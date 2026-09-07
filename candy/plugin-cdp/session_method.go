@@ -99,7 +99,9 @@ func buildSessionSpawn(in *params.CdpInput, ep *cdpEndpoint, exe, venue, logDir 
 		EnvFps:       strconv.Itoa(fps),
 		EnvStateDir:  in.StateDir,
 		EnvSessionID: in.SessionId,
-		EnvTab:       in.Tab,
+	}
+	if in.Tab != "" {
+		env[EnvTab] = in.Tab
 	}
 	if venue != "" {
 		env[EnvVenue] = venue
