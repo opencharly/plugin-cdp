@@ -19,9 +19,9 @@ import (
 // pipeline, this Invoke OWNS the whole verdict: read the host-pre-resolved DevTools URL
 // (the host owns the podman / venue / port-mapping resolution), dispatch the method (the
 // /json HTTP surface for status/open/list/close; the per-tab CDP WebSocket for the rest),
-// then evaluate the stdout/stderr/exit_status matchers + the screenshot artifact validators
-// itself (via the shared sdk implementation — R3), and return the wire {status,message}
-// the host decodes.
+// then evaluate the stdout/stderr/exit_status matchers (the screenshot artifact
+// validators run through sdk.LandArtifact inside the screenshot method itself — R3),
+// and return the wire {status,message} the host decodes.
 
 // cdpEndpoint is the dialable Chrome DevTools endpoint the plugin builds from the addr the
 // generic host-endpoint reverse-leg (cc.ResolveEndpoint) returns for the in-venue CDP port
@@ -46,8 +46,8 @@ type provider struct{ pb.UnimplementedProviderServer }
 // input (params.CdpInput — the per-verb fields live in the desugared
 // plugin_input since the schema-compaction cutover), and the env, skips in box
 // mode (no live Chrome DevTools endpoint on a disposable `charly check box`),
-// skips a nil endpoint, dispatches the method, and self-evaluates the matchers +
-// screenshot artifact validators.
+// skips a nil endpoint, dispatches the method (the screenshot method lands its PNG
+// through sdk.LandArtifact), and self-evaluates the matchers.
 func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
 	var op spec.Op
 	if len(req.GetParamsJson()) > 0 {
@@ -98,7 +98,9 @@ func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeRe
 
 	out, runErr := dispatch(ctx, ep, &op, &in)
 
-	// The shared exit/stdout/stderr + screenshot-artifact verdict pipeline (R3). screenshot is
-	// cdp's one artifact-producing method.
-	return sdk.VerbVerdict("cdp", method, out, runErr, &op, method == "screenshot")
+	// The shared exit/stdout/stderr verdict pipeline (R3). The screenshot artifact
+	// validators no longer ride VerbVerdict's artifact flag — runScreenshot lands the
+	// PNG through sdk.LandArtifact (the ONE caller-side entry point, host leg), which
+	// runs the validators itself; a mismatch surfaces as runErr → exit 1 here.
+	return sdk.VerbVerdict("cdp", method, out, runErr, &op, false)
 }
