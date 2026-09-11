@@ -140,7 +140,7 @@ func dispatch(ctx context.Context, ep *cdpEndpoint, op *spec.Op, in *params.CdpI
 	case "wait":
 		return runWait(client, in.Selector, cdpTimeout(op))
 	case "screenshot":
-		return runScreenshot(client, in.Artifact)
+		return runScreenshot(ctx, client, in.Artifact, op)
 	case "click":
 		return runClick(client, in.Selector)
 	case "type":
@@ -407,7 +407,12 @@ func runWait(client *CDPClient, selector string, timeout time.Duration) (string,
 	}
 }
 
-func runScreenshot(client *CDPClient, artifact string) (string, error) {
+// runScreenshot captures a PNG and lands it on the host via sdk.LandArtifact (host
+// leg: nil executor, empty venue path — the capture bytes come over the CDP
+// WebSocket, not a venue-file pull), which runs every artifact-reality validator
+// the op declares (artifact_min_bytes / artifact_min_dimensions / …). A validator
+// mismatch fails the verb (the shared exit/stderr matcher path in provider.go).
+func runScreenshot(ctx context.Context, client *CDPClient, artifact string, op *spec.Op) (string, error) {
 	// Bring the tab to foreground and force a repaint before capture (a background tab
 	// returns a blank surface). Errors here are non-fatal.
 	_, _ = client.Call("Page.bringToFront", map[string]any{})
@@ -428,6 +433,11 @@ func runScreenshot(client *CDPClient, artifact string) (string, error) {
 	}
 	if err := os.WriteFile(artifact, data, 0o644); err != nil {
 		return "", fmt.Errorf("writing screenshot to %s: %w", artifact, err)
+	}
+	// Land + validate through the ONE shared entry point (host leg: nil executor /
+	// empty venue path — cdp writes host-side directly, so LandArtifact validates only).
+	if err := sdk.LandArtifact(ctx, nil, "", artifact, op); err != nil {
+		return "", fmt.Errorf("landing screenshot %s: %w", artifact, err)
 	}
 	return fmt.Sprintf("Screenshot saved to %s (%d bytes)", artifact, len(data)), nil
 }

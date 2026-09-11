@@ -32,6 +32,10 @@ type cdpEndpointStub struct {
 	frames       [][]byte
 	started      chan struct{} // closed when Page.startScreencast arrives
 	stopReceived chan struct{} // closed when Page.stopScreencast arrives
+	// capturePNG, when set, makes Page.captureScreenshot return a real PNG (the
+	// screenshot-landing tests). Nil keeps the generic empty result — the recorder
+	// tests never call captureScreenshot.
+	capturePNG []byte
 }
 
 func newCdpEndpointStub(t *testing.T, frames [][]byte) *cdpEndpointStub {
@@ -82,6 +86,14 @@ func (s *cdpEndpointStub) handleWS(ws *websocket.Conn) {
 			closeChan(s.started)
 		case "Page.stopScreencast":
 			closeChan(s.stopReceived)
+		case "Page.captureScreenshot":
+			if s.capturePNG != nil {
+				params, _ := json.Marshal(map[string]any{"data": base64.StdEncoding.EncodeToString(s.capturePNG)})
+				if err := websocket.JSON.Send(ws, cdpMessage{ID: msg.ID, Result: json.RawMessage(params)}); err != nil {
+					return
+				}
+				continue
+			}
 		}
 		if err := websocket.JSON.Send(ws, cdpMessage{ID: msg.ID, Result: json.RawMessage("{}")}); err != nil {
 			return
