@@ -1,7 +1,5 @@
-version: 2026.232.0520
 plugin-cdp:
     candy:
-        version: 2026.178.0900
         description: |-
             OUT-OF-TREE charly plugin serving the `cdp` Chrome-DevTools-Protocol check
             verb — a standalone Go module (go.mod + main.go) that speaks CDP over the
