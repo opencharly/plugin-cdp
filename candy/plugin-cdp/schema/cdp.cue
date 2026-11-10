@@ -26,11 +26,18 @@
 #CdpInput: {
 	// method — the cdp method to dispatch (the former core #CdpMethod enum; also
 	// the scalar-sugar primary: `cdp: <method>`).
-	method: "status" | "list" | "url" | "text" | "html" | "eval" | "axtree" | "coords" | "raw" | "wait" | "screenshot" | "open" | "close" | "click" | "type" | "spa-status" | "spa-click" | "spa-type" | "spa-key" | "spa-key-combo" | "spa-mouse" | "session"
+	//
+	// S3: the words are rows of the `_method` table at the foot of this file, and the
+	// enum this field accepts is derived from that table's word list, so the catalog
+	// has ONE home — a new method is ONE row there, and the table, the derived list
+	// and the enum cannot disagree.
+	method: or(_methodWord)
 	// action — start|stop|status for a session (session). session start begins
 	// capturing the CDP screencast (Page.startScreencast) at fps into an MJPEG stream
 	// (the host-side detached recorder); session stop finalizes it to the evidence row.
-	action?: "start" | "stop" | "status" @go(Action)
+	//
+	// S3: rows of the `_action` table at the foot of this file.
+	action?: or(_actionWord) @go(Action)
 	// fps — the screencast frame rate for session (default 5).
 	fps?: int & >=1 @go(Fps,type=int)
 	// tab — the target tab: a 1-based page index or a DevTools UUID.
@@ -85,3 +92,40 @@
 	phase?:      string @go(Phase)
 }
 
+// --- vocabulary tables (S3) --------------------------------------------------
+// Every closed set of words is a table keyed by word, and its word list is derived
+// from the table and used as `or()` of that list (§10.1 S3, D-PAT-3). The table and
+// the enum it feeds therefore cannot disagree, and a new word is ONE row here.
+// `@vocab` names the owner (§3.1): the set is compiled into THIS plugin, so the owner
+// is the plugin's own word `cdp`.
+//
+// `_action` is the DETACHED recorder's bracket (session_method.go's `switch in.Action`),
+// NOT a step's `context:`.
+_method: {
+	status: {}
+	list: {}
+	url: {}
+	text: {}
+	html: {}
+	eval: {}
+	axtree: {}
+	coords: {}
+	raw: {}
+	wait: {}
+	screenshot: {}
+	open: {}
+	close: {}
+	click: {}
+	type: {}
+	"spa-status": {}
+	"spa-click": {}
+	"spa-type": {}
+	"spa-key": {}
+	"spa-key-combo": {}
+	"spa-mouse": {}
+	session: {}
+} @vocab(cdp)
+_methodWord: [for w, _ in _method {w}]
+
+_action: {start: {}, stop: {}, status: {}} @vocab(cdp)
+_actionWord: [for w, _ in _action {w}]
