@@ -30,11 +30,18 @@ package params
 type CdpInput struct {
 	// method — the cdp method to dispatch (the former core #CdpMethod enum; also
 	// the scalar-sugar primary: `cdp: <method>`).
+	//
+	// S3: the words are rows of the `_method` table at the foot of this file, and the
+	// enum this field accepts is derived from that table's word list, so the catalog
+	// has ONE home — a new method is ONE row there, and the table, the derived list
+	// and the enum cannot disagree.
 	Method string `yaml:"method,omitempty" json:"method"`
 
 	// action — start|stop|status for a session (session). session start begins
 	// capturing the CDP screencast (Page.startScreencast) at fps into an MJPEG stream
 	// (the host-side detached recorder); session stop finalizes it to the evidence row.
+	//
+	// S3: rows of the `_action` table at the foot of this file.
 	Action string `yaml:"action,omitempty" json:"action,omitempty"`
 
 	// fps — the screencast frame rate for session (default 5).
