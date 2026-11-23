@@ -587,11 +587,22 @@ func resolveTabWS(devtoolsURL, tabID string) (string, error) {
 }
 
 // cdpEvaluate calls Runtime.evaluate and returns the result value as a string.
-func cdpEvaluate(client *CDPClient, expression string) (string, error) {
-	result, err := client.Call("Runtime.evaluate", map[string]any{
+// evaluateParams is Runtime.evaluate's params for one expression. `awaitPromise` is not
+// decoration: an expression MAY return a Promise — an async IIFE that samples a value,
+// awaits a timeout and samples again is the ONLY way to assert something that has to be
+// observed twice (a rising decoded-frame count). Without it CDP answers with the Promise
+// OBJECT, `returnByValue` renders that as `{}`, and a check cannot tell "the page said
+// nothing" from "the async result was dropped" (opencharly/plugin-cdp#11).
+func evaluateParams(expression string) map[string]any {
+	return map[string]any{
 		"expression":    expression,
 		"returnByValue": true,
-	})
+		"awaitPromise":  true,
+	}
+}
+
+func cdpEvaluate(client *CDPClient, expression string) (string, error) {
+	result, err := client.Call("Runtime.evaluate", evaluateParams(expression))
 	if err != nil {
 		return "", err
 	}
