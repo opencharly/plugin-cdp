@@ -113,6 +113,11 @@ func dispatch(ctx context.Context, ep *cdpEndpoint, op *spec.Op, in *params.CdpI
 		return runList(ep)
 	case "close":
 		return runClose(ep, in.Tab)
+	case "screenshot":
+		// Deliberately NOT the shared WebSocket connection: the surface capture can hang, and a
+		// hung call on a connection bound to the STEP context could not be abandoned without
+		// abandoning the step (see runScreenshot). This method opens its own bounded attempts.
+		return runScreenshot(ctx, ep, in.Tab, in.Artifact, op)
 	}
 
 	// WebSocket methods: connect the tab.
@@ -139,8 +144,6 @@ func dispatch(ctx context.Context, ep *cdpEndpoint, op *spec.Op, in *params.CdpI
 		return runRaw(client, in.HttpMethod, in.Params)
 	case "wait":
 		return runWait(client, in.Selector, cdpTimeout(op))
-	case "screenshot":
-		return runScreenshot(ctx, client, in.Artifact, op)
 	case "click":
 		return runClick(client, in.Selector)
 	case "type":
@@ -231,18 +234,23 @@ func runList(ep *cdpEndpoint) (string, error) {
 	return b.String(), nil
 }
 
-// runClose closes a tab by ID.
+// runClose closes a tab by the SAME reference every other method accepts (see resolveTabID), so
+// the documented `tab: "1"` works here too instead of being sent to Chrome as a literal id.
 func runClose(ep *cdpEndpoint, tabID string) (string, error) {
+	tab, err := resolveTabID(ep.URL, tabID)
+	if err != nil {
+		return "", fmt.Errorf("failed to close tab: %w", err)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(ep.URL + "/json/close/" + tabID)
+	resp, err := client.Get(ep.URL + "/json/close/" + tab.ID)
 	if err != nil {
 		return "", fmt.Errorf("failed to close tab: %w", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to close tab %s (HTTP %d)", tabID, resp.StatusCode)
+		return "", fmt.Errorf("failed to close tab %s (resolved to %s) (HTTP %d)", tabID, tab.ID, resp.StatusCode)
 	}
-	return fmt.Sprintf("Closed tab %s", tabID), nil
+	return fmt.Sprintf("Closed tab %s", tab.ID), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -407,19 +415,46 @@ func runWait(client *CDPClient, selector string, timeout time.Duration) (string,
 	}
 }
 
+// screenshotSurfaceBudget bounds the compositor ("surface") capture attempt. MEASURED on a GPU
+// Wayland Chrome (the KDE-over-VNC pod, opencharly/opencharly#1294): `Page.captureScreenshot`
+// with `fromSurface:true` never returns — the step was killed at its 4m30s never-hang bound —
+// while the same call with `fromSurface:false` returned the PNG immediately. So the surface
+// capture gets a bounded attempt and the renderer's VIEW capture is the fallback, instead of a
+// method that can only die on the clock.
+const screenshotSurfaceBudget = 20 * time.Second
+
+// captureScreenshot opens its OWN connection for one attempt. The shared connection is bound to
+// the step context, so a hung capture on it could only be abandoned by abandoning the step; a
+// non-zero budget derives a child context, which the CDP client honours as the call deadline.
+func captureScreenshot(ctx context.Context, ep *cdpEndpoint, tab string, fromSurface bool, budget time.Duration) (json.RawMessage, error) {
+	actx := ctx
+	if budget > 0 {
+		var cancel context.CancelFunc
+		actx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
+	client, err := connectTab(actx, ep.URL, tab)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	// Bring the tab to the foreground first: a background tab captures a blank surface.
+	_, _ = client.Call("Page.bringToFront", map[string]any{})
+	return client.Call("Page.captureScreenshot", map[string]any{"format": "png", "fromSurface": fromSurface})
+}
+
 // runScreenshot captures a PNG and lands it on the host via sdk.LandArtifact (host
 // leg: nil executor, empty venue path — the capture bytes come over the CDP
 // WebSocket, not a venue-file pull), which runs every artifact-reality validator
 // the op declares (artifact_min_bytes / artifact_min_dimensions / …). A validator
 // mismatch fails the verb (the shared exit/stderr matcher path in provider.go).
-func runScreenshot(ctx context.Context, client *CDPClient, artifact string, op *spec.Op) (string, error) {
-	// Bring the tab to foreground and force a repaint before capture (a background tab
-	// returns a blank surface). Errors here are non-fatal.
-	_, _ = client.Call("Page.bringToFront", map[string]any{})
-
-	result, err := client.Call("Page.captureScreenshot", map[string]any{"format": "png", "fromSurface": true})
+func runScreenshot(ctx context.Context, ep *cdpEndpoint, tab, artifact string, op *spec.Op) (string, error) {
+	result, err := captureScreenshot(ctx, ep, tab, true, screenshotSurfaceBudget)
 	if err != nil {
-		return "", fmt.Errorf("capturing screenshot: %w", err)
+		result, err = captureScreenshot(ctx, ep, tab, false, 0)
+		if err != nil {
+			return "", fmt.Errorf("capturing screenshot: %w", err)
+		}
 	}
 	var sr struct {
 		Data string `json:"data"`
@@ -543,20 +578,26 @@ func connectTab(ctx context.Context, devtoolsURL, tabID string) (*CDPClient, err
 	return NewCDPClient(ctx, wsURL)
 }
 
-// resolveTabWS fetches /json and returns the WebSocket debugger URL for the tab. A
-// numeric tabID is a 1-based index into the type:page tabs; a non-numeric tabID falls
-// through to a UUID match.
-func resolveTabWS(devtoolsURL, tabID string) (string, error) {
+// resolveTabID resolves a tab REFERENCE to the Chrome target itself. A numeric reference is a
+// 1-based index into the type:page tabs — the convention every method documents as `tab: "1"`, and
+// the only reference a plan can write, because no check variable carries a target id between
+// steps — and a non-numeric one falls through to an id match.
+//
+// ONE resolver on purpose: `close` used to take the reference verbatim while the WebSocket methods
+// resolved it, so `cdp: close` with the documented `tab: "1"` asked Chrome to close a target whose
+// id was the literal "1" and got HTTP 404 (measured on the KDE-over-VNC pod, opencharly/opencharly
+// #1294). Two methods reading one reference two ways is the defect; this is the single reading.
+func resolveTabID(devtoolsURL, tabID string) (devToolsTab, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(devtoolsURL + "/json")
 	if err != nil {
-		return "", fmt.Errorf("fetching tab list: %w", err)
+		return devToolsTab{}, fmt.Errorf("fetching tab list: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	var tabs []devToolsTab
 	if err := json.NewDecoder(resp.Body).Decode(&tabs); err != nil {
-		return "", fmt.Errorf("parsing tab list: %w", err)
+		return devToolsTab{}, fmt.Errorf("parsing tab list: %w", err)
 	}
 
 	if idx, err := strconv.Atoi(tabID); err == nil && idx >= 1 {
@@ -567,23 +608,28 @@ func resolveTabWS(devtoolsURL, tabID string) (string, error) {
 			}
 		}
 		if idx <= len(pages) {
-			tab := pages[idx-1]
-			if tab.WebSocketDebuggerURL == "" {
-				return "", fmt.Errorf("tab #%d has no WebSocket debugger URL", idx)
-			}
-			return tab.WebSocketDebuggerURL, nil
+			return pages[idx-1], nil
 		}
 	}
 
 	for _, tab := range tabs {
 		if tab.ID == tabID {
-			if tab.WebSocketDebuggerURL == "" {
-				return "", fmt.Errorf("tab %s has no WebSocket debugger URL", tabID)
-			}
-			return tab.WebSocketDebuggerURL, nil
+			return tab, nil
 		}
 	}
-	return "", fmt.Errorf("tab %s not found", tabID)
+	return devToolsTab{}, fmt.Errorf("tab %s not found", tabID)
+}
+
+// resolveTabWS resolves the WebSocket URL for a tab and opens a CDPClient bound to the step ctx.
+func resolveTabWS(devtoolsURL, tabID string) (string, error) {
+	tab, err := resolveTabID(devtoolsURL, tabID)
+	if err != nil {
+		return "", err
+	}
+	if tab.WebSocketDebuggerURL == "" {
+		return "", fmt.Errorf("tab %s has no WebSocket debugger URL", tab.ID)
+	}
+	return tab.WebSocketDebuggerURL, nil
 }
 
 // cdpEvaluate calls Runtime.evaluate and returns the result value as a string.
